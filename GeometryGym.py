@@ -5,12 +5,13 @@ import cv2
 import pydirectinput as pdi
 
 class GeometryGym:
-    pdi.PAUSE = 0.0
     def __init__(self):
+        self.BUFF = 0.05
+        pdi.PAUSE = 0.0
         self.fp = FrameProcessor.FrameProcessor()
         self.max_progress = 0
         self.current_steps = 0
-        self.action = [0, 1]
+        self.zero_progress_counter = 0
 
     def reset(self):
         """
@@ -21,14 +22,12 @@ class GeometryGym:
         pdi.keyUp('space')
         self.max_progress = 0 
         self.current_steps = 0
-        buffer_time = .05
         self.fp.clear_queue()
-
-        pdi.keyDown('r')
-        time.sleep(buffer_time)
-        pdi.keyUp('r')
+        self.zero_progress_counter = 0
 
         time.sleep(.3)
+
+        self.fp.clear_queue()
 
         while self.fp.get_state() is None:
             img = None 
@@ -43,7 +42,7 @@ class GeometryGym:
         returns: None
         """
         self.current_steps += 1
-        if self.action == 1:
+        if action == 1:
             pdi.keyDown('space')
         else:
             pdi.keyUp('space')
@@ -61,7 +60,7 @@ class GeometryGym:
             reward = .01
 
         info = {
-            "action": self.action,
+            "action": action,
             "max_progress": self.max_progress
         }
 
@@ -74,22 +73,20 @@ class GeometryGym:
         bright flash of white, and the second will detect if the "attempt x" has apppeard on the 
         screen
         """
-        if self.current_steps < 3:
-            return False
-        attempt_sprite = frame[86:130, 100:375]
         progress_sprite = frame[8:10, 208:512]
-
         current_progress = cv2.countNonZero(progress_sprite)
-        attempting = cv2.countNonZero(attempt_sprite) 
-
-        is_attempting = (attempting > 1000)
-
+        if self.max_progress > 2 and current_progress < 2:
+            return True
         if current_progress > self.max_progress:
             self.max_progress = current_progress
+        if current_progress < 1:
+            self.zero_progress_counter += 1
+        else:
+            self.zero_progress_counter = 0 
+        if self.zero_progress_counter > 100 and self.current_steps > 5:
+            return True
 
-        progress_reset = (current_progress < 2) and (current_progress < self.max_progress)
-        return progress_reset
-
+        return False
 
         
 
