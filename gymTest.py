@@ -28,8 +28,6 @@ def run_benchmark(num_episodes=25):
         
         ep_start_time = time.time()
         ep_steps = 0
-        
-        # Reset environment
         state = env.reset()
         
         if state is None or state.shape != (4, 100, 100):
@@ -38,10 +36,8 @@ def run_benchmark(num_episodes=25):
 
         dead = False
         while not dead:
-            # Pick a random action (0: Idle, 1: Jump)
             action = random.randint(0, 1)
             
-            # Step environment
             next_state, reward, dead, _ = env.step(action)
             
             ep_steps += 1
