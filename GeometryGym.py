@@ -1,95 +1,115 @@
 import FrameProcessor
 import numpy as np
-import time
-import cv2
 import pydirectinput as pdi
+import cv2
 
 class GeometryGym:
     def __init__(self):
         self.BUFF = 0.05
         pdi.PAUSE = 0.0
+        pdi.FAILSAFE = False
         self.fp = FrameProcessor.FrameProcessor()
+        self.max_progress = 0
+        self.all_time_high = 0.0
+        self.current_steps = 0
+        self.zero_progress_counter = 0
+        self.stuck_counter = 0
+
+    def reset(self):
+        pdi.keyUp('space')
         self.max_progress = 0
         self.current_steps = 0
         self.zero_progress_counter = 0
+        
+        img = None 
+        while img is None:
+            img, _ = self.fp.capture()
 
-    def reset(self):
-        """
-        detects if the player has crashed, and will reset the level accordingly given that the
-        menu pops up whenever the bot has died 
-        @returns None
-        """
-        pdi.keyUp('space')
-        self.max_progress = 0 
-        self.current_steps = 0
-        self.fp.clear_queue()
-        self.zero_progress_counter = 0
+        self.fp.reset_stack(img)
 
-        time.sleep(.3)
-
-        self.fp.clear_queue()
-
-        while self.fp.get_state() is None:
-            img = None 
-            while img is None:
-                img, _ = self.fp.capture()
-            self.fp.process(img)
         return self.fp.get_state()
 
-    def step(self, action):
-        """
-        @param: action: a binary action to take, 0 indicating no press, and 1 indicating press
-        returns: None
-        """
+    def step(self, action, frame_skip=2):
         self.current_steps += 1
+
         if action == 1:
             pdi.keyDown('space')
         else:
             pdi.keyUp('space')
-        img = None
-        while img is None:
-            img, _ = self.fp.capture()
-        binary_frame, compressed_bin = self.fp.process(img)
+
+        for _ in range(frame_skip):
+            img = None
+            while img is None:
+                img, _ = self.fp.capture()
+            binary_frame, _ = self.fp.process(img)
+            
+        if action == 1:
+            pdi.keyUp('space')
+
+        progress_sprite = binary_frame[8:10, 208:512]
+        current_progress = cv2.countNonZero(progress_sprite) if progress_sprite is not None else 0
+
+        dead = self.is_dead(binary_frame, current_progress)
         next_state = self.fp.get_state()
-        dead = self.is_dead(binary_frame)
+        reward = 0.0
 
         if dead:
-            reward = -100
             pdi.keyUp('space')
+            reward -= 1.0
+            
+            if self.all_time_high > 0:
+                progress_ratio = current_progress / float(self.all_time_high)
+            else:
+                progress_ratio = 1.0
+
+            if progress_ratio < 0.6:
+                reward = -0.5 - .5 * (1.0 - progress_ratio)
+            else:
+                reward = -0.5
+
         else:
-            reward = .01
+            if current_progress > self.max_progress:
+                progress_delta = (current_progress - self.max_progress) / (320 * 1.5)
+                reward += progress_delta * 25.0
+
+                if current_progress > self.all_time_high:
+                    reward += 2.0 + (progress_delta * 80.0)
+                    self.all_time_high = float(current_progress)
+
+                self.max_progress = current_progress
+
+        if action == 1:
+            reward -= 0.005
 
         info = {
             "action": action,
-            "max_progress": self.max_progress
+            "reward": reward,
+            "progress": current_progress,
+            "all_time_high": self.all_time_high
         }
 
         return next_state, reward, dead, info
-    
-    def is_dead(self, frame):
-        """
-        this will determine whether or not the player has died, it will do two 
-        checks to ensure no false flags occur, one will check if the cube has become a
-        bright flash of white, and the second will detect if the "attempt x" has apppeard on the 
-        screen
-        """
-        progress_sprite = frame[8:10, 208:512]
-        current_progress = cv2.countNonZero(progress_sprite)
-        if self.max_progress > 2 and current_progress < 2:
+
+    def is_dead(self, frame, current_progress):
+        if self.max_progress > 2 and current_progress == 0 and self.current_steps > 10:
             return True
-        if current_progress > self.max_progress:
-            self.max_progress = current_progress
+
         if current_progress < 1:
             self.zero_progress_counter += 1
         else:
             self.zero_progress_counter = 0 
-        if self.zero_progress_counter > 100 and self.current_steps > 5:
+
+        if self.zero_progress_counter > 60 and self.current_steps > 5:
             return True
 
         return False
 
-        
+    def update_stuck_state(self, rollout_pb):
+        if rollout_pb < self.all_time_high:
+            self.stuck_counter += 1
+        else:
+            self.stuck_counter = 0
 
-    
-
-        
+        if self.stuck_counter >= 10 and self.all_time_high > 10:
+            self.all_time_high *= 0.85
+            self.stuck_counter = 0
