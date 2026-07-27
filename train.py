@@ -24,16 +24,21 @@ agent = PPOAgent(in_channels=CHANNELS, num_actions=NUM_ACTIONS)
 
 def compute_gae(rewards, values, dones, next_value, gamma=0.98, lam=0.95):
     advantages = []
-    gae = 0
-    local_values = values + [next_value] 
+    gae = 0.0
+    
+    # Ensure all value entries are clean float scalars
+    clean_values = [v.item() if isinstance(v, torch.Tensor) else float(v) for v in values]
+    clean_next_val = next_value.item() if isinstance(next_value, torch.Tensor) else float(next_value)
+    
+    local_values = clean_values + [clean_next_val] 
     
     for step in reversed(range(len(rewards))):
-        delta = rewards[step] + gamma * local_values[step + 1] * (1 - dones[step]) - local_values[step]
-        gae = delta + gamma * lam * (1 - dones[step]) * gae
+        delta = rewards[step] + gamma * local_values[step + 1] * (1.0 - dones[step]) - local_values[step]
+        gae = delta + gamma * lam * (1.0 - dones[step]) * gae
         advantages.insert(0, gae)
         
     advantages = torch.tensor(advantages, dtype=torch.float32)
-    returns = advantages + torch.tensor(local_values[:-1], dtype=torch.float32)
+    returns = advantages + torch.tensor(clean_values, dtype=torch.float32)
     return returns, advantages
 
 def get_dynamic_rollout_steps(best_progress_pixels):
@@ -46,7 +51,7 @@ def train():
     best_all_time_progress = 0
     plateau_counter = 0
     current_entropy = BASE_ENTROPY
-                                  
+                                     
     state = gym.reset()
     
     for rollout in range(MAX_EPISODES):
@@ -67,10 +72,10 @@ def train():
             total_rollout_reward += reward
             
             states.append(state)
-            actions.append(action)
-            log_probs.append(log_prob)
+            actions.append(action if isinstance(action, (int, float)) else action.item())
+            log_probs.append(log_prob.item() if isinstance(log_prob, torch.Tensor) else log_prob)
             rewards.append(reward)
-            values.append(value)
+            values.append(value.item() if isinstance(value, torch.Tensor) else value)
             dones.append(float(done))
             
             current_progress = info.get("progress", 0)
@@ -111,7 +116,7 @@ def train():
         b_states = torch.as_tensor(np.stack(states), dtype=torch.float32)
         b_actions = torch.tensor(actions, dtype=torch.long)
         b_old_log_probs = torch.tensor(log_probs, dtype=torch.float32)
-        b_old_values = torch.tensor(values, dtype=torch.float32) #
+        b_old_values = torch.tensor(values, dtype=torch.float32)
         
         batch_size = 256 if target_rollout_steps >= 4096 else 128
 

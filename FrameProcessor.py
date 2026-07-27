@@ -6,7 +6,8 @@ import bettercam
 class FrameProcessor:
     def __init__(self):
         """
-        Constructor for frame capturing and processing (grayscale binary).
+        Constructor for frame capturing and dual-output processing 
+        (Canny for agent state, Binary for UI/Death metrics).
         """
         self.camera = bettercam.create(output_color="BGR")
         self.queue = deque(maxlen=4)
@@ -15,8 +16,7 @@ class FrameProcessor:
 
     def capture(self):
         """
-        @returns: a frame of the screen and the shape of the image, returns
-        None if there is no snapshot.
+        @returns: raw snapshot frame and shape, or (None, None)
         """
         snapshot = self.camera.grab(self.window)
         if snapshot is None:
@@ -24,42 +24,37 @@ class FrameProcessor:
         return snapshot, snapshot.shape
 
     def process(self, frame):
-        """
-        @returns: binary_frame, compressed_bin (shape: 64x64)
-        """
-        converting_factor = 127
-
+        """Pure function: transforms frame without altering state queue."""
         gray_scale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, binary_frame = cv2.threshold(gray_scale, converting_factor, 255, cv2.THRESH_BINARY)
+        compressed_gray = cv2.resize(gray_scale, self.target_size, interpolation=cv2.INTER_AREA)
+        normalized_gray = compressed_gray.astype(np.float32) / 255.0
 
-        compressed_bin = cv2.resize(binary_frame, self.target_size, interpolation=cv2.INTER_AREA)
+        # 2. Binary
+        _, binary_img = cv2.threshold(gray_scale, 127, 255, cv2.THRESH_BINARY)
+        
+        return normalized_gray, binary_img
 
-        self.queue.append(compressed_bin) 
-        return binary_frame, compressed_bin
+    def push_frame(self, canny_frame):
+        """Explicitly add a processed frame to the observation queue."""
+        self.queue.append(canny_frame)
 
     def reset_stack(self, initial_frame):
-        """
-        Fills the queue with 4 copies of the initial frame on environment reset.
-        Prevents get_state() from returning None at episode start.
-        """
+        """Fills stack with 4 identical copies of the initial frame."""
         self.queue.clear()
-        _, compressed_bin = self.process(initial_frame)
-        for _ in range(3):
-            self.queue.append(compressed_bin)
+        canny, binary = self.process(initial_frame)
+        for _ in range(4):
+            self.queue.append(canny)
+        return binary
 
     def get_state(self):
         """
-        @returns a numpy array of shape (4, 64, 64) normalized float32 [0.0, 1.0],
-        or None if queue isn't full yet.
+        @returns: numpy array of shape (4, 64, 64) float32 [0.0, 1.0],
+                  or None if queue length < 4.
         """
         if len(self.queue) < 4:
             return None
    
-        stacked = np.stack(self.queue, axis=0).astype(np.float32) / 255.0
-        return stacked
+        return np.stack(self.queue, axis=0)
 
     def clear_queue(self):
-        """
-        Empties the queue.
-        """
         self.queue.clear()
